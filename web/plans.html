@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>WaveLab 造波方案</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:1.5rem;color:#1a1a1a}
+h1{margin:0 0 .25rem} h2{margin-top:2rem;border-bottom:1px solid #ccc;padding-bottom:.25rem}
+table{border-collapse:collapse;width:100%;margin:.5rem 0}
+th,td{border:1px solid #ddd;padding:.35rem .5rem;text-align:left;font-size:.9rem}
+th{background:#f4f4f4}
+form{display:flex;flex-wrap:wrap;gap:.6rem;align-items:end;margin:.5rem 0}
+label{display:flex;flex-direction:column;font-size:.8rem;gap:.2rem}
+input,select{padding:.3rem}
+button{padding:.4rem .8rem;cursor:pointer}
+.ok{color:#177245} .bad{color:#b3261e;font-weight:bold}
+.muted{color:#666;font-size:.85rem}
+pre{background:#f7f7f7;border:1px solid #e3e3e3;padding:.6rem;overflow:auto;max-height:18rem}
+.tag{display:inline-block;padding:.05rem .45rem;border-radius:10px;font-size:.78rem;background:#eee}
+.tag.running{background:#fff3cd} .tag.completed{background:#d4edda}
+.tag.aborted,.tag.rejected,.tag.interrupted{background:#f8d7da}
+</style>
+</head>
+<body>
+<main>
+<h1>造波方案库与执行计划</h1>
+<p class="muted">保存可复用的目标波形/时长/适用区段；下发计划前强制预检当前试验与设备占用，执行后可回看计划与实际命令差异。</p>
+
+<h2>方案库</h2>
+<form id="scheme-form">
+  <label>名称<input name="name" required placeholder="regular-wave-a"></label>
+  <label>说明<input name="description" placeholder="可选"></label>
+  <label>频率 Hz<input name="frequency_hz" type="number" step="0.01" min="0.01" max="10" value="0.8" required></label>
+  <label>振幅 m<input name="amplitude" type="number" step="0.01" min="0.01" value="0.15" required></label>
+  <label>时长 ms<input name="duration_ms" type="number" step="20" min="100" value="2000" required></label>
+  <label>适用区段
+    <span><input type="checkbox" name="sections" value="section-a" checked> section-a
+          <input type="checkbox" name="sections" value="section-b"> section-b</span>
+  </label>
+  <button type="submit">保存方案</button>
+</form>
+<p class="muted">区段都不勾选表示适用于全部区段。</p>
+<table id="schemes"><thead><tr><th>名称</th><th>说明</th><th>频率Hz</th><th>振幅m</th><th>时长ms</th><th>适用区段</th><th></th></tr></thead><tbody></tbody></table>
+
+<h2>下发执行计划</h2>
+<form id="dispatch-form">
+  <label>试验 Run ID<input name="run_id" required size="38" placeholder="measured-runs 返回的 id"></label>
+  <label>方案<select name="scheme_id" required></select></label>
+  <label>区段<select name="section"><option>section-a</option><option>section-b</option></select></label>
+  <button type="button" id="preflight-btn">预检</button>
+  <button type="submit" id="dispatch-btn">下发计划</button>
+</form>
+<pre id="preflight" class="muted">尚未预检</pre>
+
+<h2>执行记录与差异回看</h2>
+<button type="button" id="refresh-btn">刷新</button>
+<table id="executions"><thead><tr><th>时间</th><th>状态</th><th>试验</th><th>区段</th><th>方案</th><th>计划/实际</th><th>差异</th><th></th></tr></thead><tbody></tbody></table>
+<pre id="execution-detail" class="muted">点击“详情”查看完整记录</pre>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+async function api(method, url, body){
+  const res = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  const text = await res.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch(e) { data = text; }
+  if(!res.ok) throw new Error(typeof data === 'string' ? data : (data || res.statusText));
+  return data;
+}
+const dispatchBody = () => ({
+  run_id: document.querySelector('[name=run_id]').value.trim(),
+  scheme_id: document.querySelector('[name=scheme_id]').value,
+  section: document.querySelector('[name=section]').value
+});
+
+async function loadSchemes(){
+  const value = await api('GET','/api/wave-schemes');
+  const schemes = value.data;
+  $('[name=scheme_id]').innerHTML = schemes.map(s=>`<option value="${s.id}">${s.name} (${s.frequency_hz}Hz/${s.duration_ms}ms)</option>`).join('');
+  $('#schemes tbody').innerHTML = schemes.map(s=>`<tr>
+    <td>${s.name}</td><td>${s.description||''}</td><td>${s.frequency_hz}</td><td>${s.amplitude}</td><td>${s.duration_ms}</td>
+    <td>${s.sections.length?s.sections.join(', '):'<span class=ok>全部</span>'}</td>
+    <td><button data-del="${s.id}">删除</button></td></tr>`).join('') || '<tr><td colspan=7 class=muted>暂无方案</td></tr>';
+}
+
+$('#schemes').addEventListener('click', async e=>{
+  const id = e.target.dataset.del; if(!id) return;
+  if(confirm('删除该方案？')){ await api('DELETE','/api/wave-schemes/'+id); loadSchemes(); }
+});
+
+$('#scheme-form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = {
+    name: f.get('name'), description: f.get('description'),
+    frequency_hz: parseFloat(f.get('frequency_hz')), amplitude: parseFloat(f.get('amplitude')),
+    duration_ms: parseInt(f.get('duration_ms'),10),
+    sections: f.getAll('sections')
+  };
+  try { await api('POST','/api/wave-schemes', body); e.target.reset(); await loadSchemes(); }
+  catch(err){ alert(err.message); }
+});
+
+$('#preflight-btn').addEventListener('click', async ()=>{
+  try{
+    const value = await api('POST','/api/wave-plans/preflight', dispatchBody());
+    const p = value.data;
+    $('#preflight').innerHTML = (p.allowed?'<span class=ok>预检通过，可以下发</span>':'<span class=bad>预检未通过，下发将被拒绝</span>') + '\n' +
+      p.checks.map(c=>`${c.ok?'✓':'✗'} ${c.name}: ${c.detail}`).join('\n');
+  } catch(err){ $('#preflight').textContent = err.message; }
+});
+
+$('#dispatch-form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  try { await api('POST','/api/wave-plans', dispatchBody()); }
+  catch(err){ alert(err.message); }
+  loadExecutions();
+});
+
+function diffText(x){
+  const paired = Math.min(x.planned.length, x.actual.length);
+  let mismatches = 0, sum = 0, max = 0;
+  const start = new Date(x.started_at).getTime();
+  for(let i=0;i<paired;i++){
+    if(x.planned[i].setpoint !== x.actual[i].setpoint) mismatches++;
+    const delta = Math.abs(new Date(x.actual[i].issued_at).getTime() - (start + x.planned[i].offset_ms));
+    sum += delta; if(delta>max) max = delta;
+  }
+  const missing = Math.max(0, x.planned.length - x.actual.length);
+  const extra = Math.max(0, x.actual.length - x.planned.length);
+  return `缺失 ${missing}，多发 ${extra}，设定值不一致 ${mismatches}，时序 max ${max}ms / mean ${paired?(sum/paired).toFixed(1):'0'}ms`;
+}
+
+async function loadExecutions(){
+  const value = await api('GET','/api/wave-plans');
+  const rows = value.data;
+  $('#executions tbody').innerHTML = rows.map(x=>`<tr>
+      <td>${new Date(x.started_at).toLocaleString()}</td>
+      <td><span class="tag ${x.status}">${x.status}</span></td>
+      <td>${x.run_id}</td><td>${x.section}</td>
+      <td>${x.scheme_snapshot.name}</td>
+      <td>${x.planned.length} / ${x.actual.length}</td>
+      <td>${x.status==='running'?'执行中…':diffText(x)}</td>
+      <td>
+        ${x.status==='running'?`<button data-abort="${x.id}">中止</button> `:''}
+        <button data-detail="${x.id}">详情</button>
+      </td></tr>`
+  ).join('') || '<tr><td colspan=8 class=muted>暂无执行记录</td></tr>';
+}
+
+$('#executions').addEventListener('click', async e=>{
+  const abortID = e.target.dataset.abort;
+  const detailID = e.target.dataset.detail;
+  if(abortID){ try{ await api('POST','/api/wave-plans/'+abortID+'/abort'); }catch(err){ alert(err.message);} setTimeout(loadExecutions, 300); return; }
+  if(detailID){
+    const value = await api('GET','/api/wave-plans/'+detailID);
+    $('#execution-detail').textContent = JSON.stringify(value.data, null, 2);
+  }
+});
+$('#refresh-btn').addEventListener('click', ()=>{ loadSchemes(); loadExecutions(); });
+
+loadSchemes(); loadExecutions();
+setInterval(()=>{ if(document.querySelector('[data-abort]')) loadExecutions(); }, 1000);
+</script>
+</body>
+</html>

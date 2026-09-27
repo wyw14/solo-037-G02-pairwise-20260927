@@ -61,6 +61,58 @@ func (c *Controller) Stop() {
     c.mu.Unlock()
 }
 
+// StartBounded drives the paddle for exactly profile.Duration, sampling every
+// step (the first command is emitted immediately at elapsed 0). Each issued
+// command is appended to the in-memory history and forwarded through emit.
+// The run stops at the deadline, when ctx is cancelled, or when Stop is called
+// (the emergency brake shares that path). Unlike Start's diagnostic loop, the
+// done channel is always closed when the goroutine exits.
+func (c *Controller) StartBounded(ctx context.Context, run model.RunID, profile Profile, epoch uint64, startedAt time.Time, step time.Duration, emit func(model.DeviceCommand)) {
+    c.mu.Lock()
+    c.run = run
+    c.active = true
+    c.done = make(chan struct{})
+    c.mu.Unlock()
+    go c.boundedLoop(ctx, run, profile, epoch, startedAt.UTC(), step, emit)
+}
+
+func (c *Controller) boundedLoop(ctx context.Context, run model.RunID, profile Profile, epoch uint64, startedAt time.Time, step time.Duration, emit func(model.DeviceCommand)) {
+    defer func() {
+        c.mu.Lock()
+        c.active = false
+        close(c.done)
+        c.mu.Unlock()
+    }()
+    ticker := time.NewTicker(step)
+    defer ticker.Stop()
+    elapsed := time.Duration(0)
+    for {
+        if elapsed > profile.Duration {
+            return
+        }
+        c.mu.Lock()
+        active := c.active
+        c.mu.Unlock()
+        if !active || ctx.Err() != nil {
+            return
+        }
+        command := model.DeviceCommand{ID: string(model.NewEventID()), Run: run, Epoch: epoch, Setpoint: profile.Sample(elapsed), IssuedAt: time.Now().UTC()}
+        c.mu.Lock()
+        c.commands = append(c.commands, command)
+        c.mu.Unlock()
+        emit(command)
+        elapsed += step
+        if elapsed > profile.Duration {
+            return
+        }
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+        }
+    }
+}
+
 func (c *Controller) Active() bool {
     c.mu.Lock()
     defer c.mu.Unlock()
