@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/wyw14/solo-037/internal/model"
+	"github.com/wyw14/solo-037/internal/plan"
+	"github.com/wyw14/solo-037/internal/tank"
 )
 
 type Runtime struct {
@@ -15,29 +17,55 @@ type Runtime struct {
 	operations   map[model.RunID]model.Operation
 	incidents    []model.Incident
 	Measurements *MeasurementArchive
+	Plans        *plan.Library
+	PlanExecutor *plan.Executor
+	occupancy    *tank.Registry
 }
 
 func NewRuntime() *Runtime {
-	archive, _ := OpenMeasurementArchive("")
-	return newRuntime(archive)
+	runtime, _ := openRuntime("")
+	return runtime
 }
 
 func OpenRuntime(directory string) (*Runtime, error) {
+	return openRuntime(directory)
+}
+
+func openRuntime(directory string) (*Runtime, error) {
 	archive, err := OpenMeasurementArchive(directory)
 	if err != nil {
 		return nil, err
 	}
-	return newRuntime(archive), nil
-}
-
-func newRuntime(archive *MeasurementArchive) *Runtime {
-	runtime := &Runtime{started: time.Now().UTC(), operations: make(map[model.RunID]model.Operation), Measurements: archive}
+	library, err := plan.OpenLibrary(directory)
+	if err != nil {
+		return nil, err
+	}
+	runtime := &Runtime{started: time.Now().UTC(), operations: make(map[model.RunID]model.Operation), Measurements: archive, Plans: library, occupancy: tank.NewRegistry(2.4)}
+	executor, err := plan.OpenExecutor(directory, library, runtime.occupancy, runtime.activeOperations)
+	if err != nil {
+		return nil, err
+	}
+	runtime.PlanExecutor = executor
 	operation := model.NewOperation("commissioning", "benchmark-hull", "section-a", "carriage-1", runtime.started)
 	runtime.operations[operation.ID] = operation
 	coordinator := NewCoordinator(runtime)
 	coordinator.Start(model.NewOperation("readiness", "calibration-body", "section-b", "carriage-2", runtime.started))
 	_ = coordinator.Generation()
-	return runtime
+	return runtime, nil
+}
+
+// activeOperations lists non-terminal tests, used by the plan executor to
+// spot conflicts before issuing a plan.
+func (r *Runtime) activeOperations() []model.Operation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]model.Operation, 0, len(r.operations))
+	for _, operation := range r.operations {
+		if operation.Active() {
+			result = append(result, operation)
+		}
+	}
+	return result
 }
 
 func (r *Runtime) Create(operation model.Operation) (model.Operation, error) {

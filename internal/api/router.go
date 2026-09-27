@@ -15,6 +15,7 @@ type Dependencies interface {
 	Interlocks() any
 	Incidents() any
 	MeasurementService
+	PlanService
 }
 
 type Router struct{ dependencies Dependencies }
@@ -33,6 +34,14 @@ func (r *Router) Handler() http.Handler {
 	router.Get("/api/measured-runs/{id}", r.measuredRun)
 	router.Post("/api/measured-runs/{id}/evidence", r.recordMeasurement)
 	router.Get("/api/measured-runs/{id}/analysis", r.measurementAnalysis)
+	router.Get("/api/wave-plans", r.wavePlans)
+	router.Post("/api/wave-plans", r.saveWavePlan)
+	router.Get("/api/wave-plans/{id}", r.wavePlan)
+	router.Delete("/api/wave-plans/{id}", r.deleteWavePlan)
+	router.Post("/api/wave-plans/{id}/preflight", r.preflightWavePlan)
+	router.Post("/api/wave-plans/{id}/execute", r.executeWavePlan)
+	router.Get("/api/plan-executions", r.planExecutions)
+	router.Get("/api/plan-executions/{id}", r.planExecution)
 	tests := TestHandler{Service: r.dependencies}
 	router.Post("/api/operations", tests.Create)
 	router.Post("/api/abort", tests.Abort)
@@ -40,6 +49,7 @@ func (r *Router) Handler() http.Handler {
 	router.Get("/equipment", r.equipmentPage)
 	router.Get("/interlocks", r.interlocksPage)
 	router.Get("/incidents", r.incidentsPage)
+	router.Get("/plans", r.plansPage)
 	return router
 }
 

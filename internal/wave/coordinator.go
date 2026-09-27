@@ -8,6 +8,9 @@ import (
     "github.com/wyw14/solo-037/internal/model"
 )
 
+// TickInterval is how often the controller issues a setpoint while running.
+const TickInterval = 5 * time.Millisecond
+
 type Controller struct {
     mu sync.Mutex
     run model.RunID
@@ -28,7 +31,7 @@ func (c *Controller) Start(ctx context.Context, run model.RunID, profile Profile
 }
 
 func (c *Controller) loop(ctx context.Context, profile Profile, epoch uint64, at time.Time) {
-    ticker := time.NewTicker(5 * time.Millisecond)
+    ticker := time.NewTicker(TickInterval)
     defer ticker.Stop()
     index := 0
     samples := profile.Samples(profile.Duration / 3)

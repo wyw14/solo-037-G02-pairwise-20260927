@@ -1,0 +1,6 @@
+<!doctype html><html><head><meta charset="utf-8"><title>WaveLab Wave Plans</title></head><body><main><h1>Wave Plans</h1><section><h2>Library</h2><pre id="plans">loading</pre></section><section><h2>Executions</h2><pre id="executions">loading</pre></section><section><h2>Execution detail</h2><pre id="detail">select an execution to review planned vs actual commands</pre></section></main><script>
+const show=(id,v)=>document.getElementById(id).textContent=JSON.stringify(v,null,2);
+fetch('/api/wave-plans').then(r=>r.json()).then(v=>show('plans',v));
+fetch('/api/plan-executions').then(r=>r.json()).then(v=>{show('executions',v);
+  const list=(v.data||[]);if(list.length){fetch('/api/plan-executions/'+list[list.length-1].id).then(r=>r.json()).then(d=>show('detail',d));}});
+</script></body></html>
